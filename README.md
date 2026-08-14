@@ -1,18 +1,28 @@
 # fivem-mcp
 
-An MCP server that lets an AI agent drive a FiveM client on this machine: keyboard, mouse,
-screenshots, the F8 console, and the client log. It speaks plain MCP over stdio, so any MCP
-client can use it — Claude Code is simply what it was built and tested against.
+An MCP server that lets an AI agent drive a FiveM client: keyboard, mouse, screenshots,
+console commands, and the client log. It speaks plain MCP over stdio, so any MCP client can
+use it — Claude Code is simply what it was built and tested against. The server runs on the
+same machine as the game, since it drives the client through local Windows APIs and sockets.
 
-Everything is external OS-level control (`SendInput` plus screen capture), so no in-game Lua
-resource is required and it works against any server. The F8 console covers the higher-level
-operations (`connect`, `quit`, `restart <resource>`) as ordinary keystrokes.
+Console commands (`connect`, `quit`, `restart <resource>`, admin commands) go over the
+client's local **devcon** socket, so nothing appears on screen and the F8 console never
+opens. That path needs no RCON password and works on servers you do not administer, because
+a command the client does not handle is forwarded to the server with the player's own
+permissions. The same socket streams console output back, which is how `read_console`
+returns text tagged with the resource that emitted each line.
+
+Keyboard and mouse input is still synthesised with `SendInput`, because that is the only way
+to actually play — to move, and to work NUI dialogs. Those tools bring the game to the
+foreground; `restore_focus` hands your window back afterwards.
 
 ## Requirements
 
 - Windows
 - .NET 11 SDK (pinned in `global.json`)
-- FiveM installed — the installer registers the `fivem://` URI scheme that `launch` uses
+- FiveM installed. `launch` runs `%LOCALAPPDATA%\FiveM\FiveM.exe` directly, passing the
+  `fivem://connect/host:port` link as an argument; set `FIVEM_EXECUTABLE` for a non-default
+  install. If the exe cannot be found it falls back to letting the shell resolve the link.
 
 ## Build
 
@@ -21,8 +31,8 @@ Debug build with `dotnet build`, or `dotnet publish -c Release` for faster start
 ## Register with an MCP client
 
 The server is a stdio MCP server, configured like any other. For Claude Code, point it at the
-published executable with `claude mcp add fivem -- C:\dev\gta\v\fivem\fivem-mcp\bin\Release\net11.0-windows\FiveMMcp.exe`,
-or run from source with `claude mcp add fivem -- dotnet run --project C:\dev\gta\v\fivem\fivem-mcp`.
+published executable with `claude mcp add fivem -- <repo>\bin\Release\net11.0-windows\FiveMMcp.exe`,
+or run from source with `claude mcp add fivem -- dotnet run --project <repo>`.
 
 For clients configured through JSON, the equivalent entry is:
 
@@ -30,7 +40,10 @@ For clients configured through JSON, the equivalent entry is:
 {
   "mcpServers": {
     "fivem": {
-      "command": "C:\\dev\\gta\\v\\fivem\\fivem-mcp\\bin\\Release\\net11.0-windows\\FiveMMcp.exe"
+      "command": "C:\\path\\to\\fivem-mcp\\bin\\Release\\net11.0-windows\\FiveMMcp.exe",
+      "env": {
+        "FIVEM_RCON_PASSWORD": "optional, only for rcon_command and notify"
+      }
     }
   }
 }
@@ -52,7 +65,7 @@ For clients configured through JSON, the equivalent entry is:
 | `press_key` | Press and release a key (`W`, `F8`, `Enter`, `Esc`, `LShift`, `Left`, …) |
 | `hold_key` / `release_key` | Sustained input for movement; `release_key all` clears everything |
 | `type_text` | Types literal text into the console or chat |
-| `console_command` | Opens F8, types a command, presses Enter, closes F8 |
+| `console_command` | Runs a client console command over the devcon socket, nothing on screen |
 | `read_console` | Reads the live client console as text, tagged with the emitting resource |
 | `get_position` | Player position and heading as `vec4(x, y, z, heading)`, plus interior and vehicle |
 | `mouse_move` | Relative deltas drive the camera; absolute coordinates position the cursor |
@@ -109,11 +122,13 @@ exception: it uses Unicode key events, which the console and chat NUI read norma
 consumes. Absolute positioning (`absolute: true`, and the coordinates on `click`) is for NUI
 and menus.
 
-**Log versus console.** `read_log` and the F8 console carry the same stream, but the log file
+**Log versus console.** `read_log` and `read_console` carry the same stream, but the log file
 drops the channel tag: a line reads `MainThrd/ All client systems loaded` with no indication
-that `devhub_lib` printed it. The console shows `script:devhub_lib` in colour. Use `read_log`
-for cheap text and `read_console` when you need to know which resource is responsible. Lua
-warnings and errors are the exception — they carry `(@resource/file.lua:line)` in both.
+that `devhub_lib` printed it. `read_console` reports `[script:devhub_lib]`, because the
+devcon stream carries the channel with every message. Prefer `read_console` when you need to
+know which resource is responsible; `read_log` still wins for history from before the server
+started, since the console tap only sees what is printed while it is attached. Lua warnings
+and errors are the exception — they carry `(@resource/file.lua:line)` in both.
 
 **Elevation.** If FiveM runs elevated and the MCP client does not, `SendInput` is silently
 blocked by UIPI. The tools report this rather than failing quietly.
