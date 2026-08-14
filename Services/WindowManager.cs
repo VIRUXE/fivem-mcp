@@ -25,7 +25,7 @@ public sealed record ScreenRect(int Left, int Top, int Right, int Bottom);
 public sealed class WindowManager {
     // Whatever the user was looking at before a tool first stole focus, so it can be
     // handed back when the agent is done driving the game.
-    private nint _windowBeforeFocusSteal;
+    private nint windowBeforeFocusSteal;
 
     public WindowInfo GetWindow() {
         var proc = FindGameProcess();
@@ -83,7 +83,7 @@ public sealed class WindowManager {
 
         var current = User32.GetForegroundWindow();
         if (current != 0 && current != info.Handle) {
-            _windowBeforeFocusSteal = current;
+            windowBeforeFocusSteal = current;
         }
 
         if (info.IsMinimized) {
@@ -141,8 +141,8 @@ public sealed class WindowManager {
     /// so they get their terminal back when the agent is done with the game.
     /// </summary>
     public string RestorePreviousFocus() {
-        var target = _windowBeforeFocusSteal;
-        _windowBeforeFocusSteal = 0;
+        var target = windowBeforeFocusSteal;
+        windowBeforeFocusSteal = 0;
 
         if (target != 0 && User32.IsWindowVisible(target)) {
             ForceForeground(target);

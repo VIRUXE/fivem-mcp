@@ -14,6 +14,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The companion FiveM resource ships alongside but builds separately. -->
+    <Compile Remove="resources/**" />
+    <None Remove="resources/**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="ModelContextProtocol" Version="2.2.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.11" />
     <PackageReference Include="System.Drawing.Common" Version="10.0.11" />

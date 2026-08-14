@@ -16,6 +16,8 @@ builder.Services.AddSingleton<LogService>();
 builder.Services.AddSingleton<LauncherService>();
 builder.Services.AddSingleton<RconService>();
 builder.Services.AddSingleton<DevConService>();
+builder.Services.AddSingleton<ConsoleTapService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ConsoleTapService>());
 
 builder.Services
     .AddMcpServer()

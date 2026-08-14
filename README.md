@@ -53,7 +53,8 @@ For clients configured through JSON, the equivalent entry is:
 | `hold_key` / `release_key` | Sustained input for movement; `release_key all` clears everything |
 | `type_text` | Types literal text into the console or chat |
 | `console_command` | Opens F8, types a command, presses Enter, closes F8 |
-| `read_console` | Screenshots the F8 console — the only view with per-resource attribution |
+| `read_console` | Reads the live client console as text, tagged with the emitting resource |
+| `get_position` | Player position and heading as `vec4(x, y, z, heading)`, plus interior and vehicle |
 | `mouse_move` | Relative deltas drive the camera; absolute coordinates position the cursor |
 | `click` / `scroll` | Mouse buttons and wheel |
 | `wait` | Pause between actions, for loading screens and held keys |

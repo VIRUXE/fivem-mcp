@@ -13,7 +13,8 @@ public sealed class FiveMTools(
     LogService logs,
     LauncherService launcher,
     RconService rcon,
-    DevConService devcon) {
+    DevConService devcon,
+    ConsoleTapService consoleTap) {
     [McpServerTool(Name = "launch"), Description(
         "Launches the FiveM client, optionally connecting straight to a server address " +
         "(host:port) via the fivem:// URI scheme. No-op if the client is already running.")]
@@ -241,38 +242,28 @@ public sealed class FiveMTools(
     }
 
     [McpServerTool(Name = "read_console"), Description(
-        "Opens the F8 console, screenshots it, and closes it again. Unlike read_log, the console tags every " +
-        "line with the resource that emitted it (script:my_resource), so use this when you need to know which " +
-        "resource produced a message. read_log is cheaper for plain text.")]
-    public CallToolResult ReadConsole(
-        [Description("Leave the console open afterwards instead of closing it. Default false.")]
-        bool keepConsoleOpen = false,
-        [Description("Downscale so the image is at most this wide. Console text needs width - default 1600.")]
-        int maxWidth = 1600) {
-        if (windows.EnsureFocused() is { } err) {
-            return Error(err);
+        "Reads the live client console as text, tagged with the channel that emitted each line " +
+        "(script:my_resource and friends). This attribution is exactly what the log file drops, so prefer this " +
+        "over read_log when you need to know which resource produced a message. Nothing is opened on screen.")]
+    public string ReadConsole(
+        [Description("Cursor from a previous read_console call. Returns only lines printed since that point.")]
+        long? sinceCursor = null,
+        [Description("Case-insensitive regex matched against the message and the channel, e.g. \"error|mcp_bridge\".")]
+        string? filter = null,
+        [Description("Maximum lines to return. Default 200.")]
+        int maxLines = 200) {
+        var (lines, cursor, connected) = consoleTap.Read(sinceCursor, filter, Math.Clamp(maxLines, 1, 2000));
+
+        if (!connected && lines.Length == 0) {
+            return "Not attached to the client console. Is the FiveM client running? " +
+                   "The tap reconnects automatically every few seconds.";
         }
 
-        const ushort vkF8 = 0x77;
-        input.PressKey(vkF8, 60);
-        Thread.Sleep(500);
+        var header = $"cursor={cursor} lines={lines.Length}" + (connected ? "" : " (tap disconnected, showing buffered lines)");
 
-        try {
-            var (png, w, h) = capture.Capture(null, null, null, null, maxWidth);
-            return new CallToolResult {
-                Content =
-                [
-                    new TextContentBlock { Text = $"FiveM F8 console, {w}x{h}." },
-                    ImageContentBlock.FromBytes(png, "image/png"),
-                ],
-            };
-        } catch (Exception ex) {
-            return Error(ex.Message);
-        } finally {
-            if (!keepConsoleOpen) {
-                input.PressKey(vkF8, 60);
-            }
-        }
+        return lines.Length == 0
+            ? $"{header}\n(nothing new)"
+            : header + "\n" + string.Join('\n', lines.Select(l => $"[{l.Channel}] {l.Text}"));
     }
 
     [McpServerTool(Name = "mouse_move"), Description(

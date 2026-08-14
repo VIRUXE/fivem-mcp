@@ -10,11 +10,11 @@ namespace FiveMMcp.Services;
 /// </summary>
 public sealed class InputService : IDisposable {
     private static readonly int InputSize = Marshal.SizeOf<User32.INPUT>();
-    private readonly HashSet<ushort> _heldKeys = [];
-    private readonly Lock _gate = new();
+    private readonly HashSet<ushort> heldKeys = [];
+    private readonly Lock gate = new();
 
     public IReadOnlyCollection<ushort> HeldKeys {
-        get { lock (_gate) { return _heldKeys.ToArray(); } }
+        get { lock (gate) { return heldKeys.ToArray(); } }
     }
 
     private static ushort ScanCode(ushort vk) {
@@ -53,12 +53,12 @@ public sealed class InputService : IDisposable {
 
     public void KeyDown(ushort vk) {
         Send(KeyInput(vk, keyUp: false));
-        lock (_gate) { _heldKeys.Add(vk); }
+        lock (gate) { heldKeys.Add(vk); }
     }
 
     public void KeyUp(ushort vk) {
         Send(KeyInput(vk, keyUp: true));
-        lock (_gate) { _heldKeys.Remove(vk); }
+        lock (gate) { heldKeys.Remove(vk); }
     }
 
     public void PressKey(ushort vk, int holdMs) {
@@ -69,7 +69,7 @@ public sealed class InputService : IDisposable {
 
     public void ReleaseAll() {
         ushort[] held;
-        lock (_gate) { held = [.. _heldKeys]; }
+        lock (gate) { held = [.. heldKeys]; }
         foreach (var vk in held) {
             try { KeyUp(vk); } catch { /* best effort on shutdown */ }
         }
