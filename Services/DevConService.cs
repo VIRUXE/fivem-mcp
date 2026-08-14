@@ -16,7 +16,15 @@ namespace FiveMMcp.Services;
 /// </summary>
 public sealed class DevConService {
     // Retail client listens on 29200; the CL2 (second instance) build uses 29300.
-    private static readonly int[] CandidatePorts = [29200, 29300];
+    private static readonly int[] DefaultPorts = [29200, 29300];
+
+    // The client binds 127.0.0.1 unless it was launched with "-devcon", which binds
+    // 0.0.0.0 instead. Point this at another machine to drive a client running there.
+    internal static string Host =>
+        Environment.GetEnvironmentVariable("FIVEM_DEVCON_HOST") is { Length: > 0 } host ? host : "127.0.0.1";
+
+    internal static int[] CandidatePorts =>
+        int.TryParse(Environment.GetEnvironmentVariable("FIVEM_DEVCON_PORT"), out var port) ? [port] : DefaultPorts;
 
     private static ReadOnlySpan<byte> CmndMagic => "CMND"u8;
 
@@ -30,20 +38,20 @@ public sealed class DevConService {
         foreach (var port in CandidatePorts) {
             try {
                 await SendToPortAsync(command, port, ct);
-                return $"Ran client console command via devcon on port {port}: {command}";
+                return $"Ran client console command via devcon on {Host}:{port}: {command}";
             } catch (SocketException ex) {
                 errors.Add($"port {port}: {ex.SocketErrorCode}");
             }
         }
 
         throw new InvalidOperationException(
-            $"Could not reach the FiveM devcon port ({string.Join(", ", errors)}). " +
-            "Is the client running and past the launcher?");
+            $"Could not reach the FiveM devcon socket on {Host} ({string.Join(", ", errors)}). " +
+            "Is the client running and past the launcher? For a remote client it must be launched with -devcon.");
     }
 
     private static async Task SendToPortAsync(string command, int port, CancellationToken ct) {
         using var client = new TcpClient();
-        await client.ConnectAsync("127.0.0.1", port, ct);
+        await client.ConnectAsync(Host, port, ct);
 
         var packet = BuildCommandPacket(command);
         await client.GetStream().WriteAsync(packet, ct);

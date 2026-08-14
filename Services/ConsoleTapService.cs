@@ -19,7 +19,8 @@ public sealed record ConsoleLine(long Seq, DateTime At, string Channel, string T
 /// </summary>
 public sealed class ConsoleTapService(ILogger<ConsoleTapService> logger, LogService logs) : IHostedService {
     private const int MaxLines = 4000;
-    private static readonly int[] CandidatePorts = [29200, 29300];
+    // Shares the endpoint settings with DevConService: same socket, same client.
+    private static int[] CandidatePorts => DevConService.CandidatePorts;
 
     private readonly ConcurrentQueue<ConsoleLine> buffer = new();
     private readonly ConcurrentDictionary<uint, string> channels = new();
@@ -116,7 +117,7 @@ public sealed class ConsoleTapService(ILogger<ConsoleTapService> logger, LogServ
             var client = new TcpClient();
 
             try {
-                await client.ConnectAsync("127.0.0.1", port, ct);
+                await client.ConnectAsync(DevConService.Host, port, ct);
                 return client;
             } catch (SocketException) {
                 client.Dispose();

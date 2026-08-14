@@ -83,14 +83,24 @@ the client forwards what it cannot handle.
 RCON (`rcon_command`, and `notify` with `everyone: true`) earns its place in the cases devcon
 cannot reach:
 
-- **No client is running**, or it is not connected to that server. devcon lives inside the
-  game client, so it disappears with it; RCON only needs the server.
-- **The server is on another machine.** devcon is bound to `127.0.0.1`.
+- **No client is running**, or none is connected to that server. devcon is a socket *inside*
+  the game client, so it disappears with it; RCON only needs the server.
 - **Your in-game player lacks the permissions** for a command, but you administer the server
   and hold its RCON password.
 
-Note that having the password *means* you administer the server — for somebody else's server
-you have neither the password nor the in-game permissions, and no transport changes that.
+Where the game server lives does not matter. devcon only receives the command; the client is
+what executes it and forwards anything server-side over its own connection, so a client on
+your machine drives a server on the other side of the world just as well as a local one. The
+`127.0.0.1` binding limits who can reach the *socket*, not which server the command lands on.
+
+Nor is the client necessarily local. It binds `127.0.0.1` only by default — launched with
+`-devcon` it binds `0.0.0.0`, and `FIVEM_DEVCON_HOST` (plus `FIVEM_DEVCON_PORT`) points this
+server at it. That socket has no authentication whatsoever, so anyone who can reach the port
+gets arbitrary console execution in that client: only do this on a network you trust.
+
+Note also that having the RCON password *means* you administer the server — for somebody
+else's server you have neither the password nor the in-game permissions, and no transport
+changes that.
 
 Configure it with two environment variables on the MCP server process:
 `FIVEM_RCON_PASSWORD` (required, matches `rcon_password` in the server config) and
