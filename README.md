@@ -69,9 +69,27 @@ environment variables on the MCP server process: `FIVEM_RCON_PASSWORD` (required
 `127.0.0.1:30120`). Without the password those two tools report that RCON is unconfigured
 and everything else keeps working.
 
-`notify` needs the `mcp_bridge` companion resource, a C# resource that registers the
-`mcp_notify` and `mcp_players` console commands and renders messages as native feed
-notifications. Because RCON reaches the server rather than the client, the resource needs
+## The mcp_bridge companion resource
+
+`notify` and `get_position` need `resources/mcp_bridge`, which ships in this repo so the
+server and its in-game half stay in step. Build it, then make it visible to your FiveM
+server — a junction avoids keeping a second copy that drifts:
+
+```powershell
+dotnet build resources/mcp_bridge/src/Client/McpBridge.Client.csproj
+dotnet build resources/mcp_bridge/src/Server/McpBridge.Server.csproj
+
+New-Item -ItemType Junction `
+  -Path "<server-data>\resources\[dev]\mcp_bridge" `
+  -Target "<this-repo>\resources\mcp_bridge"
+```
+
+A junction needs no administrator rights, unlike a symlink. Then `ensure mcp_bridge` on the
+server. After editing `fxmanifest.lua` run `refresh` before `restart`, or the server keeps
+using the cached manifest.
+
+The resource registers `mcp_notify`, `mcp_players`, and the client-side `mcp_position`. It
+renders messages as native feed notifications. Because RCON reaches the server rather than the client, the resource needs
 both halves: the server script receives the command, and the client script draws the toast,
 since the feed natives only exist client-side. Messages support GTA colour codes such as
 `~g~` and `~b~`.
