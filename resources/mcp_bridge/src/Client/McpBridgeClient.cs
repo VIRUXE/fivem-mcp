@@ -12,6 +12,17 @@ namespace McpBridge.Client {
         public McpBridgeClient() {
             EventHandlers["mcpNotificationRequested"] += new Action<string>(OnNotificationRequested);
 
+            // Drawing the toast is purely client-side, so the MCP server calls this
+            // straight over the devcon socket. No RCON password, no server round trip,
+            // and it works even where the player has no special permissions.
+            RegisterCommand("mcp_notify", new Action<int, List<object>, string>((source, args, raw) => {
+                var message = string.Join(" ", args);
+
+                if (!string.IsNullOrWhiteSpace(message)) {
+                    OnNotificationRequested(message);
+                }
+            }), false);
+
             // A client-side command, so the MCP server can invoke it straight over the
             // devcon socket without a server round trip. Printing goes to the client
             // console, which is mirrored into CitizenFX_log_*.log for the agent to read.

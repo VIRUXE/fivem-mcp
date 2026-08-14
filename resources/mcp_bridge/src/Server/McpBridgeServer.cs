@@ -14,11 +14,15 @@ namespace McpBridge.Server {
             // Payloads are rebuilt from args rather than the raw command: RCON delivers
             // rawCommand with a leading space, which is what breaks the stock runcode
             // "run" command (its rawCommand:sub(4) leaves a stray "n" behind).
-            RegisterCommand("mcp_notify", new Action<int, List<object>, string>((source, args, raw) => {
+            // Broadcasts to everyone online. The MCP server does not need this for its own
+            // notifications - those go straight to the client over devcon via the
+            // client-side mcp_notify - but it is the only way to reach other players, and
+            // the only way to notify at all when no client console is reachable.
+            RegisterCommand("mcp_notify_all", new Action<int, List<object>, string>((source, args, raw) => {
                 var message = string.Join(" ", args);
 
                 if (string.IsNullOrWhiteSpace(message)) {
-                    Debug.WriteLine("mcp_notify: no message given");
+                    Debug.WriteLine("mcp_notify_all: no message given");
                     return;
                 }
 
@@ -27,7 +31,7 @@ namespace McpBridge.Server {
                 // broadcast explicitly instead.
                 TriggerClientEvent("mcpNotificationRequested", message);
 
-                Debug.WriteLine($"mcp_notify: sent \"{message}\" to {Players.Count()} player(s)");
+                Debug.WriteLine($"mcp_notify_all: sent \"{message}\" to {Players.Count()} player(s)");
             }), true);
 
             // Lets the MCP server confirm someone is actually in-game before acting.

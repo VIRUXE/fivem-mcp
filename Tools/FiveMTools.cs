@@ -100,15 +100,23 @@ public sealed class FiveMTools(
 
     [McpServerTool(Name = "notify"), Description(
         "Shows a notification inside the game, so the player can see what the agent is doing. " +
-        "Requires the mcp_bridge companion resource on the server. Supports GTA colour codes like ~g~ and ~b~.")]
+        "Goes over the client's devcon socket, so it needs no RCON password and no special permissions. " +
+        "Requires the mcp_bridge companion resource. Supports GTA colour codes like ~g~ and ~b~.")]
     public async Task<string> Notify(
         [Description("Message to show in-game.")] string message,
+        [Description("Show it to every player on the server instead of just this client. Needs RCON. Default false.")]
+        bool everyone = false,
         CancellationToken cancellationToken = default) {
         try {
-            var output = await rcon.ExecuteAsync($"mcp_notify {message}", 2000, cancellationToken);
-            return string.IsNullOrWhiteSpace(output) ? $"Sent notification: {message}" : output;
+            if (everyone) {
+                var output = await rcon.ExecuteAsync($"mcp_notify_all {message}", 2000, cancellationToken);
+                return string.IsNullOrWhiteSpace(output) ? $"Sent notification to everyone: {message}" : output;
+            }
+
+            await devcon.SendCommandAsync($"mcp_notify {message}", cancellationToken);
+            return $"Sent notification: {message}";
         } catch (Exception ex) {
-            return $"RCON error: {ex.Message}";
+            return $"Error sending notification: {ex.Message}";
         }
     }
 

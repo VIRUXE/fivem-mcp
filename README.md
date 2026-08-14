@@ -42,7 +42,7 @@ For clients configured through JSON, the equivalent entry is:
     "fivem": {
       "command": "C:\\path\\to\\fivem-mcp\\bin\\Release\\net11.0-windows\\FiveMMcp.exe",
       "env": {
-        "FIVEM_RCON_PASSWORD": "optional, only for rcon_command and notify"
+        "FIVEM_RCON_PASSWORD": "optional, only for rcon_command"
       }
     }
   }
@@ -60,7 +60,7 @@ For clients configured through JSON, the equivalent entry is:
 | `restore_focus` | Hands focus back to your previous window, falling back to minimising |
 | `minimize_window` | Sends the game to the background |
 | `rcon_command` | Runs a command on the *server* over RCON, without touching the client at all |
-| `notify` | Shows an in-game toast so you can see what the agent is doing |
+| `notify` | In-game toast over devcon (no credentials); `everyone: true` broadcasts via RCON |
 | `screenshot` | PNG of the game window, optional crop and downscale |
 | `press_key` | Press and release a key (`W`, `F8`, `Enter`, `Esc`, `LShift`, `Left`, …) |
 | `hold_key` / `release_key` | Sustained input for movement; `release_key all` clears everything |
@@ -73,14 +73,29 @@ For clients configured through JSON, the equivalent entry is:
 | `wait` | Pause between actions, for loading screens and held keys |
 | `read_log` | Reads `CitizenFX_log_*.log`, with tail, regex filter, and an incremental cursor |
 
-## RCON and in-game notifications
+## When RCON is worth configuring
 
-`rcon_command` and `notify` talk to the FiveM **server** over RCON (UDP), which is the one
-channel that needs neither the game client nor its console. Configure it with two
-environment variables on the MCP server process: `FIVEM_RCON_PASSWORD` (required, matches
-`rcon_password` in the server config) and `FIVEM_RCON_ADDRESS` (optional, defaults to
-`127.0.0.1:30120`). Without the password those two tools report that RCON is unconfigured
-and everything else keeps working.
+Most things do not need it. `notify` and `get_position` draw and read on the client, so they
+go over devcon and need no credentials at all. Console commands go the same way, and on a
+server where your player has permissions that already includes server-side commands, since
+the client forwards what it cannot handle.
+
+RCON (`rcon_command`, and `notify` with `everyone: true`) earns its place in the cases devcon
+cannot reach:
+
+- **No client is running**, or it is not connected to that server. devcon lives inside the
+  game client, so it disappears with it; RCON only needs the server.
+- **The server is on another machine.** devcon is bound to `127.0.0.1`.
+- **Your in-game player lacks the permissions** for a command, but you administer the server
+  and hold its RCON password.
+
+Note that having the password *means* you administer the server — for somebody else's server
+you have neither the password nor the in-game permissions, and no transport changes that.
+
+Configure it with two environment variables on the MCP server process:
+`FIVEM_RCON_PASSWORD` (required, matches `rcon_password` in the server config) and
+`FIVEM_RCON_ADDRESS` (optional, defaults to `127.0.0.1:30120`). Without the password the
+RCON-only paths report that it is unconfigured and everything else keeps working.
 
 ## The mcp_bridge companion resource
 
@@ -101,11 +116,14 @@ A junction needs no administrator rights, unlike a symlink. Then `ensure mcp_bri
 server. After editing `fxmanifest.lua` run `refresh` before `restart`, or the server keeps
 using the cached manifest.
 
-The resource registers `mcp_notify`, `mcp_players`, and the client-side `mcp_position`. It
-renders messages as native feed notifications. Because RCON reaches the server rather than the client, the resource needs
-both halves: the server script receives the command, and the client script draws the toast,
-since the feed natives only exist client-side. Messages support GTA colour codes such as
+The resource registers the client-side `mcp_notify` and `mcp_position`, which the MCP
+server calls over devcon, plus `mcp_notify_all` and `mcp_players` on the server for the RCON
+path. Notifications render as native feed messages and support GTA colour codes such as
 `~g~` and `~b~`.
+
+The client half is what matters day to day: the feed natives only exist client-side, and
+devcon reaches them directly. The server half exists solely for the RCON path, so if you
+never use RCON you can ignore it.
 
 ## Things worth knowing
 
