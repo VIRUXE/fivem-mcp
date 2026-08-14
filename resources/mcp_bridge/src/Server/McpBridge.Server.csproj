@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>McpBridge.Server.net</AssemblyName>
+    <RootNamespace>McpBridge.Server</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CitizenFX.Core.Server" Version="1.0.26803" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

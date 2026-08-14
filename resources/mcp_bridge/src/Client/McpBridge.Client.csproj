@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>McpBridge.Client.net</AssemblyName>
+    <RootNamespace>McpBridge.Client</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CitizenFX.Core.Client" Version="1.0.26803" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

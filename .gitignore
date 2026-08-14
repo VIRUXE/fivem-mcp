@@ -1,0 +1,6 @@
+bin/
+obj/
+*.user
+
+# Built companion-resource assemblies land next to the manifest.
+resources/mcp_bridge/*.dll

@@ -1,0 +1,27 @@
+<Project>
+
+  <PropertyGroup>
+    <!--
+      Mono v1 (citizen:scripting:mono) loads .NET Framework assemblies named *.net.dll.
+      The v2 runtime (mono_rt2) is a time-limited prerelease whose newest allowed value
+      on this build expired 2026-06-30, so this resource deliberately targets v1 and the
+      manifest does not declare mono_rt2.
+    -->
+    <TargetFramework>net452</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <!-- Build straight into the resource root so the manifest can reference the dll. -->
+    <OutputPath>$(MSBuildThisFileDirectory)..\</OutputPath>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <DebugType>none</DebugType>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Lets net452 build without Visual Studio's targeting packs installed. -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>
