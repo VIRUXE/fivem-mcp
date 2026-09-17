@@ -66,21 +66,59 @@ public sealed class ConsoleTapService(ILogger<ConsoleTapService> logger, LogServ
         return (lines, Interlocked.Read(ref sequence), Connected);
     }
 
+    // Base and ceiling for the reconnect backoff below. A flaky or repeatedly-dropping
+    // devcon connection must not turn into a reconnect storm: every PPCR handshake races
+    // the client's console print-drain thread over shared state that (as of writing) is
+    // not synchronised on the client side, and hammering reconnects widens that race
+    // window on every attempt. See DevConServer.cpp HandleConsoleMessage/FlushKnownCommands.
+    private static readonly TimeSpan MinReconnectDelay = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan MaxReconnectDelay = TimeSpan.FromSeconds(30);
+
+    // A connection only counts as "healthy" - resetting the backoff back to the minimum -
+    // once it has stayed up this long. A connection that drops faster than this is treated
+    // as still failing, so a client that accepts the handshake and then immediately closes
+    // (e.g. mid-crash) does not reset us straight back to rapid retries.
+    private static readonly TimeSpan HealthyConnectionThreshold = TimeSpan.FromSeconds(10);
+
     private async Task RunAsync(CancellationToken ct) {
+        var delay = MinReconnectDelay;
+
         while (!ct.IsCancellationRequested) {
+            if (!IsFiveMRunning()) {
+                // Nothing to connect to yet; there is no handshake to pace here, just
+                // avoid a tight poll loop while the client is closed or still launching.
+                delay = MinReconnectDelay;
+
+                try {
+                    await Task.Delay(MaxReconnectDelay, ct);
+                } catch (OperationCanceledException) {
+                    return;
+                }
+
+                continue;
+            }
+
+            var connectedAt = DateTime.UtcNow;
+            var wasHealthy = false;
+
             try {
                 await TapAsync(ct);
+                wasHealthy = DateTime.UtcNow - connectedAt >= HealthyConnectionThreshold;
             } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
                 return;
             } catch (Exception ex) {
+                wasHealthy = DateTime.UtcNow - connectedAt >= HealthyConnectionThreshold;
                 logger.LogDebug(ex, "console tap disconnected");
             }
 
             Connected = false;
 
-            // The client may simply not be running yet; retry quietly.
+            delay = wasHealthy
+                ? MinReconnectDelay
+                : TimeSpan.FromSeconds(Math.Min(delay.TotalSeconds * 2, MaxReconnectDelay.TotalSeconds));
+
             try {
-                await Task.Delay(3000, ct);
+                await Task.Delay(delay, ct);
             } catch (OperationCanceledException) {
                 return;
             }
@@ -111,6 +149,13 @@ public sealed class ConsoleTapService(ILogger<ConsoleTapService> logger, LogServ
             Consume(pending);
         }
     }
+
+    // Mirrors LauncherService's process detection: everything the client spawns is named
+    // FiveM or FiveM_*.
+    private static bool IsFiveMRunning() =>
+        System.Diagnostics.Process.GetProcesses().Any(p =>
+            p.ProcessName.Equals("FiveM", StringComparison.OrdinalIgnoreCase) ||
+            p.ProcessName.StartsWith("FiveM_", StringComparison.OrdinalIgnoreCase));
 
     private async Task<TcpClient> ConnectAsync(CancellationToken ct) {
         foreach (var port in CandidatePorts) {
