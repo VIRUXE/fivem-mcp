@@ -17,7 +17,7 @@ public sealed record ConsoleLine(long Seq, DateTime At, string Channel, string T
 /// the thing CitizenFX_log_*.log throws away, so this is strictly better than tailing
 /// the log, and it needs no screenshots.
 /// </summary>
-public sealed class ConsoleTapService(ILogger<ConsoleTapService> logger, LogService logs) : IHostedService {
+public sealed class ConsoleTapService(ILogger<ConsoleTapService> logger, LogService logs, DevConService devcon) : IHostedService {
     private const int MaxLines = 4000;
     // Shares the endpoint settings with DevConService: same socket, same client.
     private static int[] CandidatePorts => DevConService.CandidatePorts;
@@ -112,6 +112,7 @@ public sealed class ConsoleTapService(ILogger<ConsoleTapService> logger, LogServ
             }
 
             Connected = false;
+            await SendIndicatorAsync(on: false, ct);
 
             delay = wasHealthy
                 ? MinReconnectDelay
@@ -134,6 +135,7 @@ public sealed class ConsoleTapService(ILogger<ConsoleTapService> logger, LogServ
         await stream.FlushAsync(ct);
 
         SeedChannelNamesFromLog();
+        await SendIndicatorAsync(on: true, ct);
 
         var pending = new List<byte>();
         var chunk = new byte[16384];
@@ -147,6 +149,22 @@ public sealed class ConsoleTapService(ILogger<ConsoleTapService> logger, LogServ
 
             pending.AddRange(chunk.AsSpan(0, read).ToArray());
             Consume(pending);
+        }
+    }
+
+    /// <summary>
+    /// Toggles the mcp_bridge on-screen "MCP Connected" indicator (mcp_indicator client
+    /// command) to reflect this tap's actual connection state. Best-effort: a failure here
+    /// (e.g. the client just closed, or mcp_bridge is not installed on the connected server)
+    /// should not tear down the tap itself.
+    /// </summary>
+    private async Task SendIndicatorAsync(bool on, CancellationToken ct) {
+        try {
+            await devcon.SendCommandAsync($"mcp_indicator {(on ? "on" : "off")}", ct);
+        } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
+            throw;
+        } catch (Exception ex) {
+            logger.LogDebug(ex, "could not update mcp_indicator");
         }
     }
 
