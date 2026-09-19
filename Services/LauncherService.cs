@@ -19,16 +19,21 @@ public sealed class LauncherService(WindowManager windows) {
             ? "fivem://"
             : $"fivem://connect/{serverAddress.Trim()}";
 
-        // The client scans its own argv for an argument starting with "fivem:" (see
-        // ConnectToNative.cpp), so handing the exe the link directly works without relying
-        // on the URI scheme being registered. Fall back to letting the shell resolve it.
+        // Handing FiveM.exe the link as a plain argument makes its launcher refuse with
+        // "This application should be launched directly from the shell or a web browser",
+        // so the link goes through the shell (the registered fivem:// scheme), exactly as
+        // a browser would hand it over. Only when the scheme is not registered is the
+        // executable started bare; the caller then connects from the menu.
         var exe = FindClientExecutable();
+        var launched = uri;
 
-        if (exe is not null) {
-            Process.Start(new ProcessStartInfo(exe) { UseShellExecute = false, ArgumentList = { uri } });
-        } else {
+        try {
             Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
+        } catch (Exception) when (exe is not null) {
+            Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true });
+            launched = $"{exe} (the fivem:// scheme is not registered; run console_command \"connect {serverAddress}\" once the menu is up)";
         }
+        uri = launched;
 
         var deadline = DateTime.UtcNow.AddSeconds(Math.Clamp(waitSeconds, 0, 300));
         while (DateTime.UtcNow < deadline) {
