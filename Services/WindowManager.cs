@@ -19,6 +19,21 @@ public sealed record WindowInfo(
 public sealed record ScreenRect(int Left, int Top, int Right, int Bottom);
 
 /// <summary>
+/// What <see cref="WindowManager.EnsureFocused()"/> actually had to do. Callers that
+/// then read pixels need this: if nothing changed, nothing has to settle either.
+/// </summary>
+public enum FocusOutcome {
+    /// <summary>The game was already in front - we touched nothing.</summary>
+    AlreadyForeground,
+
+    /// <summary>We brought the window forward; the desktop still has to compose a frame.</summary>
+    Activated,
+
+    /// <summary>We un-minimized it; the game also has to rebuild its swap chain and draw.</summary>
+    RestoredFromMinimized,
+}
+
+/// <summary>
 /// Locates and focuses the FiveM game window. The game renders in
 /// FiveM_b&lt;build&gt;_GTAProcess; the launcher process ("FiveM") has no game window.
 /// </summary>
@@ -71,7 +86,15 @@ public sealed class WindowManager {
     /// Brings the game window to the foreground. Returns null on success,
     /// or a human-readable error describing what went wrong.
     /// </summary>
-    public string? EnsureFocused() {
+    public string? EnsureFocused() => EnsureFocused(out _);
+
+    /// <summary>
+    /// As <see cref="EnsureFocused()"/>, but also reports what had to be done, so a
+    /// caller about to read pixels knows how much (if anything) has to settle first.
+    /// </summary>
+    public string? EnsureFocused(out FocusOutcome outcome) {
+        outcome = FocusOutcome.AlreadyForeground;
+
         var info = GetWindow();
         if (!info.Found) {
             return "FiveM game window not found - is the client running and past the launcher?";
@@ -80,6 +103,8 @@ public sealed class WindowManager {
         if (info.IsForeground && !info.IsMinimized) {
             return null;
         }
+
+        outcome = info.IsMinimized ? FocusOutcome.RestoredFromMinimized : FocusOutcome.Activated;
 
         var current = User32.GetForegroundWindow();
         if (current != 0 && current != info.Handle) {
@@ -90,18 +115,36 @@ public sealed class WindowManager {
             User32.ShowWindow(info.Handle, User32.SW_RESTORE);
         }
 
-        if (User32.SetForegroundWindow(info.Handle)) {
-            Thread.Sleep(120);
-            if (User32.GetForegroundWindow() == info.Handle) {
-                return null;
-            }
+        if (User32.SetForegroundWindow(info.Handle) && WaitForForeground(info.Handle, ForegroundTimeoutMs)) {
+            return null;
         }
 
         ForceForeground(info.Handle);
-        Thread.Sleep(150);
-        return User32.GetForegroundWindow() == info.Handle
+        return WaitForForeground(info.Handle, ForegroundTimeoutMs)
             ? null
             : "Could not bring the FiveM window to the foreground (Windows foreground lock). Click the game window once and retry.";
+    }
+
+    private const int ForegroundTimeoutMs = 400;
+
+    /// <summary>
+    /// Polls until the window is actually foreground, or the deadline passes. Beats a
+    /// fixed sleep both ways: it returns the moment activation lands (usually a few ms),
+    /// and it still waits the full budget when the machine is busy.
+    /// </summary>
+    private static bool WaitForForeground(nint hWnd, int timeoutMs) {
+        var deadline = Stopwatch.StartNew();
+        while (true) {
+            if (User32.GetForegroundWindow() == hWnd) {
+                return true;
+            }
+
+            if (deadline.ElapsedMilliseconds >= timeoutMs) {
+                return false;
+            }
+
+            Thread.Sleep(5);
+        }
     }
 
     /// <summary>
