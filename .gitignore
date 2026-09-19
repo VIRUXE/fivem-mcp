@@ -1,5 +1,6 @@
 bin/
 obj/
+publish/
 *.user
 
 # Built companion-resource assemblies land next to the manifest.
