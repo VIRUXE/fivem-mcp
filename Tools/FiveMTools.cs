@@ -402,6 +402,72 @@ public sealed class FiveMTools(
         return x is null ? $"Clicked {button} at the current cursor position." : $"Clicked {button} at ({x},{y}).";
     }
 
+    [McpServerTool(Name = "record"), Description(
+        "Captures a burst of frames back to back and returns them as a sequence of images - " +
+        "for anything too brief for a single screenshot to catch, such as a panel that flashes " +
+        "and disappears. Optionally clicks right after the first frame, so the burst covers the " +
+        "consequence of that click; triggering it from a separate tool call would be far too late. " +
+        "Frames cost context, so keep the count low and the width small unless detail matters.")]
+    public CallToolResult Record(
+        [Description("How many frames to capture, 2 to 60. Default 12.")] int frames = 12,
+        [Description("Milliseconds between frames. 0 captures as fast as the machine allows, " +
+                     "which is what you want for a brief flash. Default 0.")] int intervalMs = 0,
+        [Description("Downscale so each frame is at most this wide. Cost in context grows with " +
+                     "pixels, so this is the knob that matters. Default 640; use 0 for native resolution.")]
+        int maxWidth = 640,
+        [Description("Window-relative X to click right after the first frame. Omit to just record.")]
+        int? clickX = null,
+        [Description("Window-relative Y to click right after the first frame.")] int? clickY = null,
+        [Description("Button for that click: left, right, or middle. Default left.")] string clickButton = "left",
+        CancellationToken cancellationToken = default) {
+        try {
+            var count = Math.Clamp(frames, 2, 60);
+            var gap = Math.Clamp(intervalMs, 0, 5_000);
+
+            // Same ceiling the wait tool enforces, so a burst can never hang a session.
+            if ((long)gap * (count - 1) > 30_000) {
+                return Error($"{count} frames every {gap}ms would block for over 30s. Lower one of them.");
+            }
+
+            Action? onFirstFrame = null;
+            if (clickX is { } px && clickY is { } py) {
+                var info = windows.GetWindow();
+                var screen = windows.ClientToScreen(info, px, py);
+                if (screen is null) {
+                    return Error("Could not translate window coordinates to screen coordinates.");
+                }
+
+                onFirstFrame = () => {
+                    input.MoveAbsolute(screen.Value.X, screen.Value.Y);
+                    input.Click(clickButton, 40);
+                };
+            }
+
+            var captured = capture.CaptureBurst(count, gap, maxWidth, onFirstFrame, cancellationToken);
+            var spanMs = captured[^1].AtMs;
+            var fps = spanMs > 0 ? (captured.Length - 1) * 1000.0 / spanMs : 0;
+
+            var clickNote = onFirstFrame is null ? "" : $", clicked {clickButton} at ({clickX},{clickY}) after frame 00";
+            var content = new List<ContentBlock> {
+                new TextContentBlock {
+                    Text = $"Recorded {captured.Length} frames over {spanMs}ms " +
+                           $"({fps:F1} fps, {captured[0].Width}x{captured[0].Height}){clickNote}.",
+                },
+            };
+
+            foreach (var (frame, index) in captured.Select((f, i) => (f, i))) {
+                content.Add(new TextContentBlock { Text = $"frame {index:00} @ {frame.AtMs}ms" });
+                content.Add(ImageContentBlock.FromBytes(frame.Png, "image/png"));
+            }
+
+            return new CallToolResult { Content = content };
+        } catch (OperationCanceledException) {
+            return Error("Recording cancelled.");
+        } catch (Exception ex) {
+            return Error(ex.Message);
+        }
+    }
+
     [McpServerTool(Name = "scroll"), Description("Scrolls the mouse wheel. Positive scrolls up, negative scrolls down.")]
     public string Scroll([Description("Number of wheel clicks. Positive = up, negative = down.")] int clicks) {
         if (windows.EnsureFocused() is { } err) {

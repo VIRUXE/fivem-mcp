@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
@@ -12,6 +13,9 @@ namespace FiveMMcp.Services;
 public sealed class CaptureService(WindowManager windows) {
     public const int DefaultMaxWidth = 1280;
 
+    /// <summary>A single frame of a burst, with when it was taken relative to the first.</summary>
+    public sealed record BurstFrame(byte[] Png, int Width, int Height, int AtMs);
+
     /// <summary>
     /// Captures the game window, optionally cropped to a window-relative region.
     /// Returns PNG bytes plus the pixel size actually delivered.
@@ -20,11 +24,11 @@ public sealed class CaptureService(WindowManager windows) {
         int? regionX, int? regionY, int? regionWidth, int? regionHeight, int maxWidth) {
         // Screen capture reads whatever is drawn on top, so the game has to be
         // in front or we photograph whichever window is covering it.
-        if (windows.EnsureFocused() is { } focusError) {
+        if (windows.EnsureFocused(out var focus) is { } focusError) {
             throw new InvalidOperationException(focusError);
         }
 
-        Thread.Sleep(150);
+        SettleAfterFocus(focus);
 
         var info = windows.GetWindow();
         if (!info.Found) {
@@ -59,6 +63,117 @@ public sealed class CaptureService(WindowManager windows) {
             if (!ReferenceEquals(scaled, shot)) {
                 scaled.Dispose();
             }
+        }
+    }
+
+    /// <summary>
+    /// Captures several frames back to back. Focusing, locating the window and
+    /// measuring its client area all happen once, up front, and the frames are
+    /// encoded only after the loop - so the loop itself does nothing but copy
+    /// pixels. That is what makes it fast enough to catch something that only
+    /// appears for a few frames.
+    /// </summary>
+    /// <param name="onFirstFrame">
+    /// Ran immediately after frame 0 is captured, from inside the loop. This is how
+    /// you record the consequence of an action: a separate tool call to trigger it
+    /// would be seconds too late.
+    /// </param>
+    public BurstFrame[] CaptureBurst(
+        int frames, int intervalMs, int maxWidth, Action? onFirstFrame, CancellationToken ct) {
+        if (windows.EnsureFocused(out var focus) is { } focusError) {
+            throw new InvalidOperationException(focusError);
+        }
+
+        SettleAfterFocus(focus);
+
+        var info = windows.GetWindow();
+        if (!info.Found) {
+            throw new InvalidOperationException("FiveM game window not found - is the client running?");
+        }
+
+        var client = windows.GetClientRectOnScreen(info)
+            ?? throw new InvalidOperationException("Could not resolve the FiveM window's client area.");
+
+        var width = client.Right - client.Left;
+        var height = client.Bottom - client.Top;
+        if (width <= 0 || height <= 0) {
+            throw new InvalidOperationException("The FiveM window has no visible client area (minimized?).");
+        }
+
+        // Allocated up front so the capture loop never waits on the allocator or the GC.
+        var shots = new Bitmap[frames];
+        var graphics = new Graphics[frames];
+        var takenAt = new int[frames];
+
+        try {
+            for (var i = 0; i < frames; i++) {
+                shots[i] = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+                graphics[i] = Graphics.FromImage(shots[i]);
+            }
+
+            var clock = Stopwatch.StartNew();
+            for (var i = 0; i < frames; i++) {
+                ct.ThrowIfCancellationRequested();
+
+                if (intervalMs > 0 && i > 0) {
+                    var due = (long)intervalMs * i;
+                    var remaining = due - clock.ElapsedMilliseconds;
+                    if (remaining > 0) {
+                        Thread.Sleep((int)remaining);
+                    }
+                }
+
+                takenAt[i] = (int)clock.ElapsedMilliseconds;
+                graphics[i].CopyFromScreen(
+                    client.Left, client.Top, 0, 0, new Size(width, height), CopyPixelOperation.SourceCopy);
+
+                if (i == 0) {
+                    onFirstFrame?.Invoke();
+                }
+            }
+
+            // Encoding is far slower than copying, so it happens once the window of
+            // interest has already been captured.
+            var result = new BurstFrame[frames];
+            for (var i = 0; i < frames; i++) {
+                var scaled = Downscale(shots[i], maxWidth);
+                try {
+                    using var ms = new MemoryStream();
+                    scaled.Save(ms, ImageFormat.Png);
+                    result[i] = new BurstFrame(ms.ToArray(), scaled.Width, scaled.Height, takenAt[i]);
+                } finally {
+                    if (!ReferenceEquals(scaled, shots[i])) {
+                        scaled.Dispose();
+                    }
+                }
+            }
+
+            return result;
+        } finally {
+            foreach (var g in graphics) {
+                g?.Dispose();
+            }
+
+            foreach (var shot in shots) {
+                shot?.Dispose();
+            }
+        }
+    }
+
+    /// <summary>
+    /// EnsureFocused already proved the window is foreground, so there is nothing left
+    /// to wait for unless we changed something. When we did, what remains is the
+    /// desktop composing a frame - and, after un-minimizing, the game rebuilding its
+    /// swap chain, which takes considerably longer.
+    /// </summary>
+    private static void SettleAfterFocus(FocusOutcome outcome) {
+        switch (outcome) {
+            case FocusOutcome.Activated:
+                Thread.Sleep(30);
+                break;
+            case FocusOutcome.RestoredFromMinimized:
+                Thread.Sleep(400);
+                break;
         }
     }
 
