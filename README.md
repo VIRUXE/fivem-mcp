@@ -10,8 +10,9 @@ sockets.
 
 ## Contents
 
+- [Install (no build required)](#install-no-build-required)
 - [How it works](#how-it-works)
-- [Requirements and build](#requirements-and-build)
+- [Build from source](#build-from-source)
 - [Register with an MCP client](#register-with-an-mcp-client)
 - [Tools](#tools)
 - [Launching the client](#launching-the-client)
@@ -21,6 +22,64 @@ sockets.
 - [Things worth knowing](#things-worth-knowing)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
+
+## Install (no build required)
+
+This section is for people who just want to use fivem-mcp. If you want to
+build it yourself, see [Build from source](#build-from-source).
+
+1. Download the latest release zip, `fivem-mcp-v<version>-win-x64.zip`, from
+   the [releases page](https://github.com/VIRUXE/fivem-mcp/releases).
+   Unzip it somewhere permanent, for example `%LOCALAPPDATA%\fivem-mcp`.
+
+2. Install the .NET 11 runtime if you do not already have it: get the
+   Windows x64 **.NET Runtime** (not the SDK) from
+   [dotnet.microsoft.com/download/dotnet/11.0](https://dotnet.microsoft.com/download/dotnet/11.0).
+   Check what is installed with:
+
+   ```
+   dotnet --list-runtimes
+   ```
+
+3. Register the server with your MCP client. For Claude Code:
+
+   ```
+   claude mcp add fivem -- %LOCALAPPDATA%\fivem-mcp\FiveMMcp.exe
+   ```
+
+   For other MCP clients, see the JSON snippet under
+   [Register with an MCP client](#register-with-an-mcp-client).
+
+4. Optional: the companion resource. Two of the tools, `notify` and
+   `get_position`, need `resources/mcp_bridge` running on the FiveM server;
+   everything else works without it. Download `mcp_bridge-v<version>.zip`
+   from the same release and unzip it into the server's resources folder,
+   for example `resources/[dev]/mcp_bridge`. The zip is source, not a
+   built resource: build the two projects inside it once with `dotnet
+   build`, then `ensure mcp_bridge`. See
+   [The mcp_bridge companion resource](#the-mcp_bridge-companion-resource)
+   for the build commands and what it registers.
+
+5. Optional: RCON. Most tools do not need it; it only matters when no
+   client is running or your player lacks permissions for a command. See
+   [When RCON is worth configuring](#when-rcon-is-worth-configuring).
+
+6. First run: launch FiveM, either through the `launch` tool or by hand,
+   and connect to a server. Then check that everything works:
+
+   ```
+   get_window_status
+   screenshot
+   read_log
+   ```
+
+   If the launcher refuses to start FiveM, set `FIVEM_LAUNCH=explorer`; see
+   [Launching the client](#launching-the-client).
+
+7. Updating: download the new release zip and replace the contents of your
+   install folder with it. The MCP client keeps the old binary loaded until
+   it reconnects, so it needs to reconnect to pick up the new one (in
+   Claude Code: `/mcp`, then reconnect).
 
 ## How it works
 
@@ -54,7 +113,10 @@ the only way to actually play: to move, and to work NUI dialogs. Those tools
 bring the game to the foreground; `restore_focus` hands your window back
 afterwards.
 
-## Requirements and build
+## Build from source
+
+This section is for developers building fivem-mcp itself. If you just want
+to use it, see [Install (no build required)](#install-no-build-required).
 
 - Windows
 - .NET 11 SDK (pinned in `global.json`)
