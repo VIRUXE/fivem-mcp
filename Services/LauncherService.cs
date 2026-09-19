@@ -19,21 +19,19 @@ public sealed class LauncherService(WindowManager windows) {
             ? "fivem://"
             : $"fivem://connect/{serverAddress.Trim()}";
 
-        // Handing FiveM.exe the link as a plain argument makes its launcher refuse with
-        // "This application should be launched directly from the shell or a web browser",
-        // so the link goes through the shell (the registered fivem:// scheme), exactly as
-        // a browser would hand it over. Only when the scheme is not registered is the
-        // executable started bare; the caller then connects from the menu.
+        // FiveM's launcher checks its *parent process* and refuses anything that is not
+        // Explorer or a browser ("This application should be launched directly from the
+        // shell or a web browser") — starting FiveM.exe from this process, with or without
+        // ShellExecute, trips it. Going through explorer.exe makes Explorer the parent.
+        // The fivem:// link is resolved by the registered scheme; without one the bare
+        // executable is opened and the caller connects from the menu.
         var exe = FindClientExecutable();
-        var launched = uri;
-
-        try {
-            Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
-        } catch (Exception) when (exe is not null) {
-            Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true });
-            launched = $"{exe} (the fivem:// scheme is not registered; run console_command \"connect {serverAddress}\" once the menu is up)";
+        var target = uri;
+        if (!SchemeRegistered() && exe is not null) {
+            target = exe;
+            uri = $"{exe} (the fivem:// scheme is not registered; run console_command \"connect {serverAddress}\" once the menu is up)";
         }
-        uri = launched;
+        Process.Start(new ProcessStartInfo("explorer.exe") { UseShellExecute = false, ArgumentList = { target } });
 
         var deadline = DateTime.UtcNow.AddSeconds(Math.Clamp(waitSeconds, 0, 300));
         while (DateTime.UtcNow < deadline) {
@@ -49,6 +47,15 @@ public sealed class LauncherService(WindowManager windows) {
             ? $"Launched {uri} (not waiting for the game window)."
             : $"Launched {uri}, but the game window did not appear within {waitSeconds}s. " +
               "The launcher/updater may still be working - check get_window_status again shortly.";
+    }
+
+    private static bool SchemeRegistered() {
+        try {
+            using var key = Microsoft.Win32.Registry.ClassesRoot.OpenSubKey(@"fivem\shell\open\command");
+            return key?.GetValue(null) is string cmd && cmd.Length > 0;
+        } catch {
+            return false;
+        }
     }
 
     /// <summary>
