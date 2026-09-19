@@ -19,19 +19,46 @@ public sealed class LauncherService(WindowManager windows) {
             ? "fivem://"
             : $"fivem://connect/{serverAddress.Trim()}";
 
-        // FiveM's launcher checks its *parent process* and refuses anything that is not
-        // Explorer or a browser ("This application should be launched directly from the
-        // shell or a web browser") — starting FiveM.exe from this process, with or without
-        // ShellExecute, trips it. Going through explorer.exe makes Explorer the parent.
-        // The fivem:// link is resolved by the registered scheme; without one the bare
-        // executable is opened and the caller connects from the menu.
+        // Two ways in, tried in order (FIVEM_LAUNCH=uri|explorer|auto picks one; auto is
+        // the default):
+        //
+        //  uri      - hand the fivem:// link to the shell, the way a browser does. Needs the
+        //             scheme registered. FiveM's launcher checks its *parent process* and
+        //             refuses anything that is not Explorer or a browser ("This application
+        //             should be launched directly from the shell or a web browser"); when
+        //             the caller runs from an ordinary terminal the shell resolves the
+        //             handler and this is enough, when it is refused set
+        //             FIVEM_LAUNCH=explorer.
+        //  explorer - start through explorer.exe so Explorer is the parent, with the link
+        //             when the scheme is registered and the bare executable otherwise (the
+        //             caller then connects from the menu with console_command). This is
+        //             the fallback when the scheme is not registered or the uri way is
+        //             refused, and it cannot be used from an elevated process, where
+        //             explorer.exe hands the request to the unelevated desktop shell and
+        //             the parent check sees a different session.
+        var mode = (Environment.GetEnvironmentVariable("FIVEM_LAUNCH") ?? "auto").Trim().ToLowerInvariant();
         var exe = FindClientExecutable();
-        var target = uri;
-        if (!SchemeRegistered() && exe is not null) {
-            target = exe;
-            uri = $"{exe} (the fivem:// scheme is not registered; run console_command \"connect {serverAddress}\" once the menu is up)";
+        var registered = SchemeRegistered();
+        var how = uri;
+
+        if (mode != "explorer" && registered) {
+            try {
+                Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
+                how = $"{uri} via the fivem:// scheme";
+            } catch (Exception ex) when (mode == "auto") {
+                registered = false; // fall through to explorer
+                how = $"{uri} (shell refused the fivem:// scheme: {ex.Message}); ";
+            }
         }
-        Process.Start(new ProcessStartInfo("explorer.exe") { UseShellExecute = false, ArgumentList = { target } });
+        if (mode == "explorer" || !registered) {
+            var target = registered ? uri : (exe ?? throw new InvalidOperationException(
+                "FiveM.exe not found (set FIVEM_EXECUTABLE) and the fivem:// scheme is not registered."));
+            Process.Start(new ProcessStartInfo("explorer.exe") { UseShellExecute = false, ArgumentList = { target } });
+            how = registered
+                ? $"{uri} via explorer.exe"
+                : $"{exe} via explorer.exe (fivem:// scheme not registered; run console_command \"connect {serverAddress}\" once the menu is up)";
+        }
+        uri = how;
 
         var deadline = DateTime.UtcNow.AddSeconds(Math.Clamp(waitSeconds, 0, 300));
         while (DateTime.UtcNow < deadline) {
