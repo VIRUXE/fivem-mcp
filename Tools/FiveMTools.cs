@@ -76,32 +76,42 @@ public sealed class FiveMTools(
 
     [McpServerTool(Name = "get_position"), Description(
         "Reports the player's world position and heading as vec4(x, y, z, heading), plus interior and vehicle. " +
-        "Requires the mcp_bridge companion resource, which registers the client-side mcp_position command.")]
+        "Requires the mcp_bridge companion resource, which registers the client-side mcp_position command. " +
+        "If mcp_bridge is not running, this automatically runs \"ensure mcp_bridge\" over RCON and retries once " +
+        "before giving up - set FIVEM_RCON_PASSWORD for that recovery to work.")]
     public async Task<string> GetPosition(CancellationToken cancellationToken = default) {
         try {
-            var cursor = logs.Read(null, 1, null, 1).Cursor;
-            await devcon.SendCommandAsync("mcp_position", cancellationToken);
-
-            // The command prints on the game thread, so give it a frame or two to land.
-            for (var attempt = 0; attempt < 10; attempt++) {
-                await Task.Delay(150, cancellationToken);
-
-                var since = logs.Read(cursor, 0, "mcp_position:", 20);
-                if (since.Lines.Length > 0) {
-                    return since.Lines[^1][(since.Lines[^1].IndexOf("mcp_position:", StringComparison.Ordinal))..];
-                }
-            }
-
-            return "Sent mcp_position but saw no reply in the client log. Is mcp_bridge running on this server?";
+            return await RunWithBridgeRecoveryAsync(TrySendPositionAsync, "mcp_position", cancellationToken);
         } catch (Exception ex) {
             return $"Error reading position: {ex.Message}";
         }
     }
 
+    private async Task<string?> TrySendPositionAsync(CancellationToken cancellationToken) {
+        var cursor = logs.Read(null, 1, null, 1).Cursor;
+        await devcon.SendCommandAsync("mcp_position", cancellationToken);
+
+        // The command prints on the game thread, so give it a frame or two to land.
+        for (var attempt = 0; attempt < 10; attempt++) {
+            await Task.Delay(150, cancellationToken);
+
+            var since = logs.Read(cursor, 0, "mcp_position:", 20);
+            if (since.Lines.Length > 0) {
+                return since.Lines[^1][(since.Lines[^1].IndexOf("mcp_position:", StringComparison.Ordinal))..];
+            }
+        }
+
+        return null;
+    }
+
     [McpServerTool(Name = "notify"), Description(
         "Shows a notification inside the game, so the player can see what the agent is doing. " +
         "Goes over the client's devcon socket, so it needs no RCON password and no special permissions. " +
-        "Requires the mcp_bridge companion resource. Supports GTA colour codes like ~g~ and ~b~.")]
+        "Requires the mcp_bridge companion resource. With everyone: true (which does need RCON), a missing " +
+        "mcp_bridge is started automatically with \"ensure mcp_bridge\" and the broadcast is retried once. " +
+        "The single-client path has no reply to check, so a missing bridge there fails silently - use " +
+        "everyone: true or get_position first if you need to confirm the bridge is actually up. " +
+        "Supports GTA colour codes like ~g~ and ~b~.")]
     public async Task<string> Notify(
         [Description("Message to show in-game.")] string message,
         [Description("Show it to every player on the server instead of just this client. Needs RCON. Default false.")]
@@ -109,14 +119,78 @@ public sealed class FiveMTools(
         CancellationToken cancellationToken = default) {
         try {
             if (everyone) {
-                var output = await rcon.ExecuteAsync($"mcp_notify_all {message}", 2000, cancellationToken);
-                return string.IsNullOrWhiteSpace(output) ? $"Sent notification to everyone: {message}" : output;
+                return await RunWithBridgeRecoveryAsync(
+                    ct => TryNotifyEveryoneAsync(message, ct), "mcp_notify_all", cancellationToken);
             }
 
             await devcon.SendCommandAsync($"mcp_notify {message}", cancellationToken);
             return $"Sent notification: {message}";
         } catch (Exception ex) {
             return $"Error sending notification: {ex.Message}";
+        }
+    }
+
+    private async Task<string?> TryNotifyEveryoneAsync(string message, CancellationToken cancellationToken) {
+        string output;
+
+        try {
+            output = await rcon.ExecuteAsync($"mcp_notify_all {message}", 2000, cancellationToken);
+        } catch (TimeoutException) {
+            return null;
+        }
+
+        // An unregistered server command doesn't time out - FXServer answers with this text.
+        if (output.Contains("No such command", StringComparison.OrdinalIgnoreCase)) {
+            return null;
+        }
+
+        return string.IsNullOrWhiteSpace(output) ? $"Sent notification to everyone: {message}" : output;
+    }
+
+    /// <summary>
+    /// Shared recovery for every tool that depends on the mcp_bridge companion resource.
+    /// <paramref name="attempt"/> runs the bridge command and returns null when it gets no
+    /// usable reply. On null, this starts mcp_bridge once over RCON, gives it a moment to
+    /// come up, and lets <paramref name="attempt"/> run exactly one more time - never an
+    /// unbounded retry loop. If recovery isn't possible (RCON unconfigured, ensure failed,
+    /// or the retry still comes back empty), it returns an actionable error instead of the
+    /// generic "is mcp_bridge running?" question.
+    /// </summary>
+    private async Task<string> RunWithBridgeRecoveryAsync(
+        Func<CancellationToken, Task<string?>> attempt,
+        string commandLabel,
+        CancellationToken cancellationToken) {
+        var result = await attempt(cancellationToken);
+        if (result is not null) {
+            return result;
+        }
+
+        if (await TryStartBridgeAsync(cancellationToken)) {
+            result = await attempt(cancellationToken);
+            if (result is not null) {
+                return $"{result}\n\n(mcp_bridge was not running; started it automatically over RCON.)";
+            }
+        }
+
+        return $"Sent {commandLabel} but got no reply, and mcp_bridge could not be started automatically. " +
+               "mcp_bridge ships with this MCP at resources\\mcp_bridge - it may need to be copied into the " +
+               "server's resources\\ folder before \"ensure mcp_bridge\" can start it, and FIVEM_RCON_PASSWORD " +
+               "must be set for this MCP to run that command for you.";
+    }
+
+    private async Task<bool> TryStartBridgeAsync(CancellationToken cancellationToken) {
+        if (!rcon.IsConfigured) {
+            return false;
+        }
+
+        try {
+            await rcon.ExecuteAsync("ensure mcp_bridge", 2000, cancellationToken);
+            await Task.Delay(1500, cancellationToken);
+            return true;
+        } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+            throw;
+        } catch {
+            return false;
         }
     }
 
