@@ -302,3 +302,7 @@ renaming them: move `FiveMMcp.exe` and `FiveMMcp.dll` aside, build, and
 delete the old copies after the client has reconnected. The client picks up
 the new binary only when it restarts the server (in Claude Code, `/mcp`
 then reconnect; `/reload-plugins` does not restart user-level servers).
+
+## License
+
+[Unlicense](LICENSE), public domain.
