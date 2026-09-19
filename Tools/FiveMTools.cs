@@ -325,8 +325,12 @@ public sealed class FiveMTools(
 
     [McpServerTool(Name = "read_console"), Description(
         "Reads the live client console as text, tagged with the channel that emitted each line " +
-        "(script:my_resource and friends). This attribution is exactly what the log file drops, so prefer this " +
-        "over read_log when you need to know which resource produced a message. Nothing is opened on screen.")]
+        "(script:my_resource and friends). This attribution is exactly what the log file drops. The tap attaches " +
+        "on the first call and lets go after 60s without reads, so the first call mostly returns nothing: call " +
+        "again after the prints you want. Every attach is a devcon handshake the client can crash on while its " +
+        "console is busy (a known unsynchronised race in the client), so prefer read_log unless the channel " +
+        "attribution is what you need, and avoid attaching while a script is about to print a lot. " +
+        "Nothing is opened on screen.")]
     public string ReadConsole(
         [Description("Cursor from a previous read_console call. Returns only lines printed since that point.")]
         long? sinceCursor = null,
@@ -334,11 +338,15 @@ public sealed class FiveMTools(
         string? filter = null,
         [Description("Maximum lines to return. Default 200.")]
         int maxLines = 200) {
+        var started = consoleTap.EnsureAttached();
         var (lines, cursor, connected) = consoleTap.Read(sinceCursor, filter, Math.Clamp(maxLines, 1, 2000));
 
         if (!connected && lines.Length == 0) {
-            return "Not attached to the client console. Is the FiveM client running? " +
-                   "The tap reconnects automatically every few seconds.";
+            return started
+                ? "Attaching to the client console now; nothing buffered yet. Call read_console again in a few seconds " +
+                  "(the tap stays attached for 60s after each call)."
+                : "Not attached to the client console yet. Is the FiveM client running and past the launcher? " +
+                  "The tap keeps trying for 60s after each read_console call.";
         }
 
         var header = $"cursor={cursor} lines={lines.Length}" + (connected ? "" : " (tap disconnected, showing buffered lines)");

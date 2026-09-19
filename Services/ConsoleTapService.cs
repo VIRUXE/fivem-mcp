@@ -10,12 +10,21 @@ namespace FiveMMcp.Services;
 public sealed record ConsoleLine(long Seq, DateTime At, string Channel, string Text);
 
 /// <summary>
-/// Keeps a live subscription to the client console over the devcon socket.
+/// Keeps a subscription to the client console over the devcon socket, but only while
+/// someone is reading it.
 ///
 /// Sending "PPCR" makes the client stream every console print as a PRNT packet, which
 /// carries the emitting channel - "script:my_resource" and friends. That attribution is
 /// the thing CitizenFX_log_*.log throws away, so this is strictly better than tailing
 /// the log, and it needs no screenshots.
+///
+/// The tap is attached on demand: every PPCR handshake races the client's console
+/// print-drain thread over unsynchronised state (DevConServer.cpp
+/// HandleConsoleMessage/FlushKnownCommands; upstream fix in citizenfx/fivem#4206 never
+/// shipped), and a client whose console is busy can crash in devcon.dll on that race. A
+/// tap that is always on, reconnecting forever and toggling mcp_indicator on every
+/// attach, keeps rolling that dice; one that exists only between a read_console call and
+/// <see cref="IdleTimeout"/> later rolls it as rarely as the caller does.
 /// </summary>
 public sealed class ConsoleTapService(ILogger<ConsoleTapService> logger, LogService logs, DevConService devcon) : IHostedService {
     private const int MaxLines = 4000;
@@ -26,19 +35,44 @@ public sealed class ConsoleTapService(ILogger<ConsoleTapService> logger, LogServ
     private readonly ConcurrentDictionary<uint, string> channels = new();
     private CancellationTokenSource? stopping;
     private long sequence;
+    private readonly object gate = new();
+    private Task? runner;
+    private DateTime lastReadAt = DateTime.MinValue;
+
+    /// <summary>How long after the last read_console call the tap lets go of the socket.</summary>
+    public static readonly TimeSpan IdleTimeout = TimeSpan.FromSeconds(60);
 
     public bool Connected { get; private set; }
 
-    public Task StartAsync(CancellationToken cancellationToken) {
-        stopping = new CancellationTokenSource();
-        _ = Task.Run(() => RunAsync(stopping.Token), CancellationToken.None);
-        return Task.CompletedTask;
-    }
+    /// <summary>Whether the tap loop is currently running (attached or trying to attach).</summary>
+    public bool Active { get { lock (gate) { return runner is { IsCompleted: false }; } } }
+
+    // Hosted only so shutdown can cancel a running tap; nothing starts at boot.
+    public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
     public Task StopAsync(CancellationToken cancellationToken) {
         stopping?.Cancel();
         return Task.CompletedTask;
     }
+
+    /// <summary>
+    /// Starts the tap loop if it is not running, and marks now as the last read so the
+    /// idle timer starts from here. Returns true when the loop was started by this call.
+    /// </summary>
+    public bool EnsureAttached() {
+        lock (gate) {
+            lastReadAt = DateTime.UtcNow;
+            if (runner is { IsCompleted: false }) {
+                return false;
+            }
+            stopping = new CancellationTokenSource();
+            var token = stopping.Token;
+            runner = Task.Run(() => RunAsync(token), CancellationToken.None);
+            return true;
+        }
+    }
+
+    private bool IdleExpired => DateTime.UtcNow - lastReadAt > IdleTimeout;
 
     /// <summary>
     /// Returns buffered console lines. Pass the cursor from a previous call to get only
@@ -83,7 +117,7 @@ public sealed class ConsoleTapService(ILogger<ConsoleTapService> logger, LogServ
     private async Task RunAsync(CancellationToken ct) {
         var delay = MinReconnectDelay;
 
-        while (!ct.IsCancellationRequested) {
+        while (!ct.IsCancellationRequested && !IdleExpired) {
             if (!IsFiveMRunning()) {
                 // Nothing to connect to yet; there is no handshake to pace here, just
                 // avoid a tight poll loop while the client is closed or still launching.
@@ -112,7 +146,9 @@ public sealed class ConsoleTapService(ILogger<ConsoleTapService> logger, LogServ
             }
 
             Connected = false;
-            await SendIndicatorAsync(on: false, ct);
+            if (IdleExpired) {
+                break;
+            }
 
             delay = wasHealthy
                 ? MinReconnectDelay
@@ -129,6 +165,15 @@ public sealed class ConsoleTapService(ILogger<ConsoleTapService> logger, LogServ
     private async Task TapAsync(CancellationToken ct) {
         using var client = await ConnectAsync(ct);
         Connected = true;
+        try {
+            await TapStreamAsync(client, ct);
+        } finally {
+            Connected = false;
+            await SendIndicatorAsync(on: false, CancellationToken.None);
+        }
+    }
+
+    private async Task TapStreamAsync(TcpClient client, CancellationToken ct) {
 
         var stream = client.GetStream();
         await stream.WriteAsync("PPCR"u8.ToArray(), ct);
@@ -140,8 +185,15 @@ public sealed class ConsoleTapService(ILogger<ConsoleTapService> logger, LogServ
         var pending = new List<byte>();
         var chunk = new byte[16384];
 
-        while (!ct.IsCancellationRequested) {
-            var read = await stream.ReadAsync(chunk, ct);
+        while (!ct.IsCancellationRequested && !IdleExpired) {
+            using var idle = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            idle.CancelAfter(IdleTimeout);
+            int read;
+            try {
+                read = await stream.ReadAsync(chunk, idle.Token);
+            } catch (OperationCanceledException) when (!ct.IsCancellationRequested) {
+                continue; // quiet console; loop re-checks the idle timer
+            }
 
             if (read == 0) {
                 return;
